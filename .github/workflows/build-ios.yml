@@ -30,10 +30,10 @@ jobs:
         run: |
           mkdir -p Payload
           cp -R build/ios/iphoneos/Runner.app Payload/
-          zip -r Counter.ipa Payload
+          zip -r MENSURA.ipa Payload
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Counter-iPhone
-          path: Counter.ipa
+          name: MENSURA-iPhone
+          path: MENSURA.ipa
