@@ -1,4 +1,7 @@
+import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
@@ -20,25 +23,42 @@ class MensuraApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const CupertinoApp(
+    return CupertinoApp(
       debugShowCheckedModeBanner: false,
-      title: 'MENSURA',
+      title: 'Mensura',
       builder: _appBuilder,
-      theme: CupertinoThemeData(
+      theme: const CupertinoThemeData(
         brightness: Brightness.light,
         primaryColor: CupertinoColors.black,
         scaffoldBackgroundColor: CupertinoColors.white,
         textTheme: CupertinoTextThemeData(
           textStyle: TextStyle(
             color: Color(0xFF090909),
-            fontSize: 17,
-            letterSpacing: -0.2,
+            fontFamily: '.SF Pro Text',
+            fontSize: 15,
+            letterSpacing: -0.1,
           ),
         ),
       ),
-      home: LandingPage(),
+      home: _initialPreviewPage(),
     );
   }
+}
+
+Widget _initialPreviewPage() {
+  if (!Platform.isIOS) {
+    switch (Platform.environment['MENSURA_PREVIEW_SCREEN']) {
+      case 'home':
+        return const HomeShell();
+      case 'measurements':
+        return MeasurementsPage(data: OnboardingData());
+      case 'login':
+        return const LoginPage();
+      case 'age':
+        return AgePage(data: OnboardingData());
+    }
+  }
+  return const SplashPage();
 }
 
 Widget _appBuilder(BuildContext context, Widget? child) {
@@ -51,10 +71,10 @@ Widget _appBuilder(BuildContext context, Widget? child) {
 class OnboardingData {
   DateTime birthday = DateTime(DateTime.now().year - 18, 1, 1);
   String? gender;
-  String heightUnit = 'ft';
-  double? heightCm;
+  String heightUnit = 'cm';
+  double? heightCm = 150;
   String weightUnit = 'kg';
-  double? weightKg;
+  double? weightKg = 50;
   String? goal;
   String? pace;
   String? movement;
@@ -84,6 +104,7 @@ const _soft = Color(0xFFF6F6F7);
 const _track = Color(0xFFE3E3E7);
 const _line = Color(0xFFD0D2D6);
 const _error = Color(0xFFC62828);
+const _nativeShellChannel = MethodChannel('com.mensura/native_shell');
 
 void _tapHaptic() => HapticFeedback.lightImpact();
 void _selectionHaptic() => HapticFeedback.selectionClick();
@@ -93,6 +114,77 @@ Future<void> _push(BuildContext context, Widget page) {
   return Navigator.of(
     context,
   ).push(CupertinoPageRoute<void>(builder: (_) => page));
+}
+
+void _openHome(BuildContext context) {
+  _tapHaptic();
+  Navigator.of(context).pushAndRemoveUntil(
+    CupertinoPageRoute<void>(builder: (_) => const HomeShell()),
+    (route) => false,
+  );
+}
+
+class SplashPage extends StatefulWidget {
+  const SplashPage({super.key});
+
+  @override
+  State<SplashPage> createState() => _SplashPageState();
+}
+
+class _SplashPageState extends State<SplashPage>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 700),
+    )..forward();
+    _timer = Timer(const Duration(milliseconds: 1250), () {
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        PageRouteBuilder<void>(
+          transitionDuration: const Duration(milliseconds: 260),
+          pageBuilder: (_, animation, secondaryAnimation) =>
+              const LandingPage(),
+          transitionsBuilder: (_, animation, secondaryAnimation, child) =>
+              FadeTransition(opacity: animation, child: child),
+        ),
+      );
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return CupertinoPageScaffold(
+      backgroundColor: CupertinoColors.white,
+      child: Center(
+        child: FadeTransition(
+          opacity: CurvedAnimation(parent: _controller, curve: Curves.easeOut),
+          child: const Text(
+            'Mensura',
+            style: TextStyle(
+              color: _black,
+              fontFamily: '.SF Pro Display',
+              fontSize: 30,
+              fontWeight: FontWeight.w600,
+              letterSpacing: -0.7,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class LandingPage extends StatefulWidget {
@@ -145,13 +237,14 @@ class _LandingPageState extends State<LandingPage>
                     ),
                     offset: const Offset(0, -.08),
                     child: const Text(
-                      'MENSURA',
+                      'Mensura',
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         color: _black,
-                        fontSize: 40,
-                        fontWeight: FontWeight.w400,
-                        letterSpacing: -1.2,
+                        fontFamily: '.SF Pro Display',
+                        fontSize: 32,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: -0.8,
                         height: 1,
                       ),
                     ),
@@ -175,9 +268,9 @@ class _LandingPageState extends State<LandingPage>
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             color: Color(0xFF68686D),
-                            fontSize: 18.5,
+                            fontSize: 15.5,
                             fontWeight: FontWeight.w500,
-                            letterSpacing: -0.2,
+                            letterSpacing: -0.1,
                           ),
                         ),
                       ),
@@ -206,7 +299,7 @@ class _LandingPageState extends State<LandingPage>
                           'Login',
                           style: TextStyle(
                             color: _black,
-                            fontSize: 18,
+                            fontSize: 16,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
@@ -279,23 +372,23 @@ class _OnboardingScaffold extends StatelessWidget {
           children: [
             if (step != null)
               Padding(
-                padding: const EdgeInsets.fromLTRB(22, 10, 22, 0),
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
                 child: _ProgressBar(step: step!),
               ),
-            SizedBox(height: step == null ? 5 : 7),
+            SizedBox(height: step == null ? 4 : 6),
             SizedBox(
-              height: 52,
+              height: 44,
               child: Row(
                 children: [
                   SizedBox(
-                    width: 64,
+                    width: 56,
                     child: CupertinoButton(
-                      minimumSize: const Size(48, 48),
-                      padding: const EdgeInsets.only(left: 18, right: 8),
+                      minimumSize: const Size(44, 44),
+                      padding: const EdgeInsets.only(left: 16, right: 6),
                       onPressed: () => Navigator.of(context).pop(),
                       child: const SizedBox(
-                        width: 28,
-                        height: 28,
+                        width: 24,
+                        height: 24,
                         child: CustomPaint(painter: _BackArrowPainter()),
                       ),
                     ),
@@ -306,13 +399,14 @@ class _OnboardingScaffold extends StatelessWidget {
                       textAlign: TextAlign.center,
                       style: const TextStyle(
                         color: _black,
-                        fontSize: 22,
+                        fontFamily: '.SF Pro Display',
+                        fontSize: 17.5,
                         fontWeight: FontWeight.w600,
-                        letterSpacing: -0.55,
+                        letterSpacing: -0.25,
                       ),
                     ),
                   ),
-                  const SizedBox(width: 64),
+                  const SizedBox(width: 56),
                 ],
               ),
             ),
@@ -320,14 +414,14 @@ class _OnboardingScaffold extends StatelessWidget {
               child: SingleChildScrollView(
                 keyboardDismissBehavior:
                     ScrollViewKeyboardDismissBehavior.onDrag,
-                padding: const EdgeInsets.fromLTRB(22, 24, 22, 22),
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 18),
                 child: child,
               ),
             ),
             AnimatedPadding(
               duration: const Duration(milliseconds: 220),
               curve: Curves.easeOutCubic,
-              padding: EdgeInsets.fromLTRB(22, 8, 22, keyboard > 0 ? 12 : 42),
+              padding: EdgeInsets.fromLTRB(20, 8, 20, keyboard > 0 ? 10 : 24),
               child: _PrimaryButton(label: buttonLabel, onPressed: onContinue),
             ),
           ],
@@ -344,13 +438,13 @@ class _ProgressBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Row(
-      children: List.generate(13, (index) {
+      children: List.generate(12, (index) {
         return Expanded(
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 260),
             curve: Curves.easeOutCubic,
-            height: 5,
-            margin: EdgeInsets.only(right: index == 12 ? 0 : 4),
+            height: 4,
+            margin: EdgeInsets.only(right: index == 11 ? 0 : 3),
             decoration: BoxDecoration(
               color: index < step ? CupertinoColors.black : _track,
               borderRadius: BorderRadius.circular(99),
@@ -386,7 +480,7 @@ class _PrimaryButtonState extends State<_PrimaryButton> {
       },
       child: SizedBox(
         width: double.infinity,
-        height: 60,
+        height: 54,
         child: Stack(
           fit: StackFit.expand,
           children: [
@@ -404,8 +498,8 @@ class _PrimaryButtonState extends State<_PrimaryButton> {
                     boxShadow: const [
                       BoxShadow(
                         color: Color(0x24000000),
-                        blurRadius: 20,
-                        offset: Offset(0, 8),
+                        blurRadius: 16,
+                        offset: Offset(0, 6),
                       ),
                     ],
                   ),
@@ -417,7 +511,7 @@ class _PrimaryButtonState extends State<_PrimaryButton> {
                 widget.label,
                 style: const TextStyle(
                   color: CupertinoColors.white,
-                  fontSize: 18,
+                  fontSize: 16.5,
                   fontWeight: FontWeight.w700,
                 ),
               ),
@@ -562,10 +656,11 @@ class _Heading extends StatelessWidget {
       text,
       style: TextStyle(
         color: _black,
-        fontSize: long ? 30 : 36,
-        height: long ? 1.16 : 1.12,
+        fontFamily: '.SF Pro Display',
+        fontSize: long ? 26 : 30,
+        height: long ? 1.18 : 1.15,
         fontWeight: FontWeight.w700,
-        letterSpacing: long ? -1.14 : -1.62,
+        letterSpacing: long ? -0.8 : -1,
       ),
     );
   }
@@ -578,13 +673,13 @@ class _Description extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(top: 11),
+      padding: const EdgeInsets.only(top: 9),
       child: Text(
         text,
         style: const TextStyle(
           color: _secondary,
-          fontSize: 18,
-          height: 1.5,
+          fontSize: 15.5,
+          height: 1.4,
           fontWeight: FontWeight.w400,
           letterSpacing: -0.2,
         ),
@@ -605,7 +700,7 @@ class _ErrorText extends StatelessWidget {
       curve: Curves.easeOut,
       child: visible
           ? Padding(
-              padding: const EdgeInsets.only(top: 10),
+              padding: const EdgeInsets.only(top: 8),
               child: SizedBox(
                 width: double.infinity,
                 child: Text(
@@ -613,7 +708,7 @@ class _ErrorText extends StatelessWidget {
                   textAlign: TextAlign.center,
                   style: const TextStyle(
                     color: _error,
-                    fontSize: 14,
+                    fontSize: 13,
                     height: 1.45,
                     fontWeight: FontWeight.w500,
                   ),
@@ -666,14 +761,14 @@ class _ChoiceCardState extends State<_ChoiceCard> {
           duration: const Duration(milliseconds: 180),
           curve: Curves.easeOutCubic,
           width: double.infinity,
-          constraints: BoxConstraints(minHeight: widget.centered ? 58 : 62),
-          padding: const EdgeInsets.symmetric(horizontal: 17, vertical: 13),
+          constraints: BoxConstraints(minHeight: widget.centered ? 52 : 56),
+          padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 11),
           decoration: BoxDecoration(
             color: _soft,
-            borderRadius: BorderRadius.circular(9),
+            borderRadius: BorderRadius.circular(10),
             border: Border.all(
               color: widget.selected ? CupertinoColors.black : _soft,
-              width: 2,
+              width: 1.5,
             ),
           ),
           child: Row(
@@ -682,8 +777,8 @@ class _ChoiceCardState extends State<_ChoiceCard> {
                 : MainAxisAlignment.start,
             children: [
               if (widget.icon != null) ...[
-                SizedBox(width: 22, height: 22, child: widget.icon),
-                const SizedBox(width: 12),
+                SizedBox(width: 20, height: 20, child: widget.icon),
+                const SizedBox(width: 10),
               ],
               Flexible(
                 child: Column(
@@ -699,7 +794,7 @@ class _ChoiceCardState extends State<_ChoiceCard> {
                           : TextAlign.left,
                       style: TextStyle(
                         color: _black,
-                        fontSize: 17,
+                        fontSize: 15.5,
                         height: 1.3,
                         fontWeight: widget.centered
                             ? FontWeight.w500
@@ -712,7 +807,7 @@ class _ChoiceCardState extends State<_ChoiceCard> {
                         widget.subtitle!,
                         style: const TextStyle(
                           color: Color(0xFF707077),
-                          fontSize: 14,
+                          fontSize: 13,
                           height: 1.42,
                         ),
                       ),
@@ -735,12 +830,12 @@ class _Options extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(top: 30),
+      padding: const EdgeInsets.only(top: 22),
       child: Column(
         children: [
           for (var i = 0; i < children.length; i++) ...[
             children[i],
-            if (i != children.length - 1) const SizedBox(height: 12),
+            if (i != children.length - 1) const SizedBox(height: 10),
           ],
         ],
       ),
@@ -775,25 +870,36 @@ class _AgePageState extends State<AgePage> {
         children: [
           const _Heading('How old are you?'),
           const _Description('Select your date of birth.'),
-          const SizedBox(height: 26),
-          SizedBox(
-            height: 180,
-            child: CupertinoDatePicker(
-              mode: CupertinoDatePickerMode.date,
-              initialDateTime: widget.data.birthday,
-              minimumDate: DateTime(DateTime.now().year - 80),
-              maximumDate: DateTime(DateTime.now().year - 16),
-              onDateTimeChanged: (value) {
-                widget.data.birthday = value;
-                setState(() => error = false);
-              },
+          const SizedBox(height: 20),
+          CupertinoTheme(
+            data: CupertinoTheme.of(context).copyWith(
+              textTheme: const CupertinoTextThemeData(
+                pickerTextStyle: TextStyle(
+                  color: _black,
+                  fontSize: 17,
+                  fontWeight: FontWeight.w400,
+                ),
+              ),
+            ),
+            child: SizedBox(
+              height: 156,
+              child: CupertinoDatePicker(
+                mode: CupertinoDatePickerMode.date,
+                initialDateTime: widget.data.birthday,
+                minimumDate: DateTime(DateTime.now().year - 80),
+                maximumDate: DateTime(DateTime.now().year - 16),
+                onDateTimeChanged: (value) {
+                  widget.data.birthday = value;
+                  setState(() => error = false);
+                },
+              ),
             ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
           Center(
             child: Text(
               '${widget.data.age} years old',
-              style: const TextStyle(color: Color(0xFF85858B), fontSize: 14),
+              style: const TextStyle(color: Color(0xFF85858B), fontSize: 13),
             ),
           ),
           _ErrorText(
@@ -825,7 +931,7 @@ class _GenderPageState extends State<GenderPage> {
       buttonLabel: 'Continue',
       onContinue: () {
         setState(() => error = widget.data.gender == null);
-        if (!error) _push(context, HeightPage(data: widget.data));
+        if (!error) _push(context, MeasurementsPage(data: widget.data));
       },
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -888,7 +994,7 @@ class _UnderlineField extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: 104,
+      width: 90,
       child: CupertinoTextField(
         controller: controller,
         placeholder: placeholder,
@@ -899,18 +1005,18 @@ class _UnderlineField extends StatelessWidget {
         inputFormatters: [FilteringTextInputFormatter.digitsOnly],
         onChanged: onChanged,
         onSubmitted: onSubmitted,
-        padding: const EdgeInsets.fromLTRB(6, 5, 6, 9),
+        padding: const EdgeInsets.fromLTRB(6, 4, 6, 7),
         decoration: const BoxDecoration(
-          border: Border(bottom: BorderSide(color: _line, width: 3)),
+          border: Border(bottom: BorderSide(color: _line, width: 2)),
         ),
         placeholderStyle: const TextStyle(
           color: Color(0xFFB1B2B7),
-          fontSize: 44,
+          fontSize: 32,
           fontWeight: FontWeight.w400,
         ),
         style: const TextStyle(
           color: _black,
-          fontSize: 44,
+          fontSize: 32,
           height: 1.2,
           fontWeight: FontWeight.w500,
         ),
@@ -1038,7 +1144,7 @@ class _HeightPageState extends State<HeightPage> {
           const _Description(
             'Your height helps us estimate your energy needs.',
           ),
-          const SizedBox(height: 42),
+          const SizedBox(height: 28),
           Center(
             child: cm
                 ? _UnderlineField(
@@ -1140,6 +1246,172 @@ class _WeightPageState extends State<WeightPage> {
   }
 }
 
+class MeasurementsPage extends StatefulWidget {
+  const MeasurementsPage({super.key, required this.data});
+  final OnboardingData data;
+
+  @override
+  State<MeasurementsPage> createState() => _MeasurementsPageState();
+}
+
+class _MeasurementsPageState extends State<MeasurementsPage> {
+  static final weights = List<int>.generate(221, (index) => index + 30);
+  static final heights = List<int>.generate(121, (index) => index + 100);
+
+  late final FixedExtentScrollController weightController;
+  late final FixedExtentScrollController heightController;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.data.weightUnit = 'kg';
+    widget.data.heightUnit = 'cm';
+    widget.data.weightKg = (widget.data.weightKg ?? 50).clamp(30, 250);
+    widget.data.heightCm = (widget.data.heightCm ?? 150).clamp(100, 220);
+    weightController = FixedExtentScrollController(
+      initialItem: widget.data.weightKg!.round() - 30,
+    );
+    heightController = FixedExtentScrollController(
+      initialItem: widget.data.heightCm!.round() - 100,
+    );
+  }
+
+  @override
+  void dispose() {
+    weightController.dispose();
+    heightController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _OnboardingScaffold(
+      step: 3,
+      title: 'Measurements',
+      buttonLabel: 'Continue',
+      onContinue: () => _push(context, GoalPage(data: widget.data)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _Heading('What are your measurements?'),
+          const _Description('Choose your current weight and height.'),
+          const SizedBox(height: 22),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: _MeasurementWheel(
+                  label: 'Weight',
+                  unit: 'kg',
+                  values: weights,
+                  controller: weightController,
+                  onChanged: (value) {
+                    widget.data.weightKg = value.toDouble();
+                  },
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: _MeasurementWheel(
+                  label: 'Height',
+                  unit: 'cm',
+                  values: heights,
+                  controller: heightController,
+                  onChanged: (value) {
+                    widget.data.heightCm = value.toDouble();
+                  },
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MeasurementWheel extends StatelessWidget {
+  const _MeasurementWheel({
+    required this.label,
+    required this.unit,
+    required this.values,
+    required this.controller,
+    required this.onChanged,
+  });
+
+  final String label;
+  final String unit;
+  final List<int> values;
+  final FixedExtentScrollController controller;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            color: _black,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 8),
+        CupertinoTheme(
+          data: CupertinoTheme.of(context).copyWith(
+            textTheme: const CupertinoTextThemeData(
+              pickerTextStyle: TextStyle(
+                color: _black,
+                fontSize: 19,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          child: SizedBox(
+            height: 172,
+            child: CupertinoPicker(
+              scrollController: controller,
+              itemExtent: 38,
+              useMagnifier: true,
+              magnification: 1.04,
+              selectionOverlay: const CupertinoPickerDefaultSelectionOverlay(
+                background: Color(0x0A000000),
+                capStartEdge: false,
+                capEndEdge: false,
+              ),
+              onSelectedItemChanged: (index) {
+                _selectionHaptic();
+                onChanged(values[index]);
+              },
+              children: [
+                for (final value in values)
+                  Center(
+                    child: Text.rich(
+                      TextSpan(
+                        text: '$value',
+                        children: [
+                          TextSpan(
+                            text: ' $unit',
+                            style: const TextStyle(
+                              color: _secondary,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class GoalPage extends StatefulWidget {
   const GoalPage({super.key, required this.data});
   final OnboardingData data;
@@ -1160,7 +1432,7 @@ class _GoalPageState extends State<GoalPage> {
       'performance': 'Improve performance',
     };
     return _OnboardingScaffold(
-      step: 5,
+      step: 4,
       title: 'Goal',
       buttonLabel: 'Continue',
       onContinue: () {
@@ -1169,7 +1441,7 @@ class _GoalPageState extends State<GoalPage> {
         if (widget.data.goal == 'lose' || widget.data.goal == 'build') {
           _push(context, PacePage(data: widget.data));
         } else {
-          _push(context, MovementPage(data: widget.data, step: 6));
+          _push(context, MovementPage(data: widget.data, step: 5));
         }
       },
       child: Column(
@@ -1223,12 +1495,12 @@ class _PacePageState extends State<PacePage> {
             ('standard', 'Standard gain', 'Moderate surplus · 10%'),
           ];
     return _OnboardingScaffold(
-      step: 6,
+      step: 5,
       title: 'Progress',
       buttonLabel: 'Continue',
       onContinue: () {
         setState(() => error = widget.data.pace == null);
-        if (!error) _push(context, MovementPage(data: widget.data, step: 7));
+        if (!error) _push(context, MovementPage(data: widget.data, step: 6));
       },
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1612,7 +1884,7 @@ class _BodyFatPageState extends State<BodyFatPage> {
     if (widget.data.goal == 'lose' || widget.data.goal == 'build') {
       _push(
         context,
-        TargetPage(data: widget.data, step: math.min(13, widget.step + 1)),
+        TargetPage(data: widget.data, step: math.min(12, widget.step + 1)),
       );
     } else {
       _push(context, SignupPage(data: widget.data));
@@ -1698,9 +1970,7 @@ class _TargetPageState extends State<TargetPage> {
   }
 
   double? get targetKg {
-    final value = double.tryParse(controller.text);
-    if (value == null) return null;
-    return widget.data.targetWeightUnit == 'kg' ? value : value / 2.2046226218;
+    return double.tryParse(controller.text);
   }
 
   bool get showWarning {
@@ -1735,25 +2005,26 @@ class _TargetPageState extends State<TargetPage> {
         children: [
           const _Heading('What weight are you aiming for?'),
           const _Description('You can adjust this later.'),
-          const SizedBox(height: 42),
+          const SizedBox(height: 28),
           Center(
             child: _UnderlineField(
               controller: controller,
-              placeholder: widget.data.targetWeightUnit == 'kg' ? '65' : '143',
+              placeholder: '65',
               onChanged: (_) => setState(() => error = false),
               onSubmitted: (_) => submit(),
             ),
           ),
           _ErrorText('Please enter a valid target weight.', visible: error),
-          const SizedBox(height: 16),
-          _UnitToggle(
-            values: const ['kg', 'lb'],
-            selected: widget.data.targetWeightUnit,
-            onChanged: (value) => setState(() {
-              widget.data.targetWeightUnit = value;
-              controller.clear();
-              error = false;
-            }),
+          const SizedBox(height: 10),
+          const Center(
+            child: Text(
+              'kg',
+              style: TextStyle(
+                color: _secondary,
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ),
           AnimatedSize(
             duration: const Duration(milliseconds: 220),
@@ -1811,29 +2082,29 @@ class _AuthField extends StatelessWidget {
           label,
           style: const TextStyle(
             color: _black,
-            fontSize: 15,
+            fontSize: 14,
             fontWeight: FontWeight.w600,
           ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 7),
         SizedBox(
-          height: 58,
+          height: 50,
           child: CupertinoTextField(
             controller: controller,
             placeholder: placeholder,
             obscureText: obscure,
             keyboardType: keyboardType,
             onSubmitted: onSubmitted,
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            style: const TextStyle(color: _black, fontSize: 17),
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            style: const TextStyle(color: _black, fontSize: 16),
             placeholderStyle: const TextStyle(
               color: Color(0xFF9A9AA0),
-              fontSize: 17,
+              fontSize: 16,
             ),
             decoration: BoxDecoration(
               color: CupertinoColors.white,
               border: Border.all(color: const Color(0xFFC7C8CD), width: 1.5),
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(12),
             ),
           ),
         ),
@@ -1873,8 +2144,7 @@ class _SignupPageState extends State<SignupPage> {
           : null;
     });
     if (error == null) {
-      _tapHaptic();
-      Navigator.of(context).popUntil((route) => route.isFirst);
+      _openHome(context);
     }
   }
 
@@ -1932,9 +2202,8 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   void submit() {
-    _tapHaptic();
     if (email.text.trim().isNotEmpty && password.text.isNotEmpty) {
-      Navigator.of(context).pop();
+      _openHome(context);
     }
   }
 
@@ -1997,16 +2266,828 @@ class _LoginPageState extends State<LoginPage> {
             children: [
               _SocialButton(
                 painter: const _GoogleLogoPainter(),
-                onTap: () => Navigator.of(context).pop(),
+                onTap: () => _openHome(context),
               ),
               const SizedBox(width: 16),
               _SocialButton(
                 painter: const _AppleLogoPainter(),
-                onTap: () => Navigator.of(context).pop(),
+                onTap: () => _openHome(context),
               ),
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+const _calorieBlue = Color(0xFF5C9CFC);
+const _proteinCoral = Color(0xFFFD8765);
+const _fatYellow = Color(0xFFFCC54A);
+const _carbGreen = Color(0xFF4CB079);
+const _nutritionTrack = Color(0xFFF8F6F7);
+
+class HomeShell extends StatefulWidget {
+  const HomeShell({super.key});
+
+  @override
+  State<HomeShell> createState() => _HomeShellState();
+}
+
+class _HomeShellState extends State<HomeShell> {
+  int selectedIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    if (Platform.isIOS) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _nativeShellChannel.invokeMethod<void>('showTabs');
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final showPreviewTabs = !Platform.isIOS;
+    return CupertinoPageScaffold(
+      backgroundColor: const Color(0xFFF5F6F7),
+      child: SafeArea(
+        bottom: false,
+        child: Stack(
+          children: [
+            Positioned.fill(
+              bottom: 0,
+              child: selectedIndex == 0
+                  ? const _NutritionDashboard()
+                  : const SizedBox.expand(),
+            ),
+            if (showPreviewTabs)
+              Align(
+                alignment: Alignment.bottomCenter,
+                child: _PreviewBottomBar(
+                  selectedIndex: selectedIndex,
+                  onSelected: (index) => setState(() => selectedIndex = index),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ignore: unused_element
+class _LegacyNutritionDashboard extends StatelessWidget {
+  const _LegacyNutritionDashboard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 390),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 22),
+            decoration: BoxDecoration(
+              color: CupertinoColors.white,
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: const Color(0xFFF0EEF0)),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x0D000000),
+                  blurRadius: 24,
+                  offset: Offset(0, 8),
+                ),
+              ],
+            ),
+            child: Column(
+              children: [
+                const Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Calories',
+                      style: TextStyle(
+                        color: _black,
+                        fontFamily: '.SF Pro Display',
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: -0.35,
+                      ),
+                    ),
+                    Text(
+                      '2,180 kcal goal',
+                      style: TextStyle(
+                        color: _secondary,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+                TweenAnimationBuilder<double>(
+                  duration: const Duration(milliseconds: 850),
+                  curve: Curves.easeOutCubic,
+                  tween: Tween(begin: 0, end: .65),
+                  builder: (context, progress, child) {
+                    return SizedBox(
+                      width: 184,
+                      height: 184,
+                      child: CustomPaint(
+                        painter: _LegacyCalorieRingPainter(progress: progress),
+                        child: child,
+                      ),
+                    );
+                  },
+                  child: const Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          '1,420',
+                          style: TextStyle(
+                            color: _black,
+                            fontFamily: '.SF Pro Display',
+                            fontSize: 34,
+                            height: 1,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: -1.1,
+                          ),
+                        ),
+                        SizedBox(height: 7),
+                        Text(
+                          'calories left',
+                          style: TextStyle(
+                            color: _secondary,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 26),
+                const _LegacyMacroBar(
+                  label: 'Protein',
+                  value: '86 / 140 g',
+                  progress: .61,
+                  color: _proteinCoral,
+                ),
+                const SizedBox(height: 18),
+                const _LegacyMacroBar(
+                  label: 'Fat',
+                  value: '42 / 70 g',
+                  progress: .60,
+                  color: _fatYellow,
+                ),
+                const SizedBox(height: 18),
+                const _LegacyMacroBar(
+                  label: 'Carbs',
+                  value: '168 / 240 g',
+                  progress: .70,
+                  color: _carbGreen,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LegacyCalorieRingPainter extends CustomPainter {
+  const _LegacyCalorieRingPainter({required this.progress});
+  final double progress;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const strokeWidth = 14.0;
+    final center = size.center(Offset.zero);
+    final radius = (size.shortestSide - strokeWidth) / 2;
+    final rect = Rect.fromCircle(center: center, radius: radius);
+    final track = Paint()
+      ..color = _nutritionTrack
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth
+      ..strokeCap = StrokeCap.round;
+    final fill = Paint()
+      ..color = _calorieBlue
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth
+      ..strokeCap = StrokeCap.round;
+    canvas.drawCircle(center, radius, track);
+    canvas.drawArc(
+      rect,
+      -math.pi / 2,
+      math.pi * 2 * progress.clamp(0, 1),
+      false,
+      fill,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _LegacyCalorieRingPainter oldDelegate) {
+    return oldDelegate.progress != progress;
+  }
+}
+
+class _LegacyMacroBar extends StatelessWidget {
+  const _LegacyMacroBar({
+    required this.label,
+    required this.value,
+    required this.progress,
+    required this.color,
+  });
+
+  final String label;
+  final String value;
+  final double progress;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              label,
+              style: const TextStyle(
+                color: _black,
+                fontSize: 14.5,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            Text(
+              value,
+              style: const TextStyle(
+                color: _secondary,
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 9),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(99),
+          child: Container(
+            height: 9,
+            color: _nutritionTrack,
+            alignment: Alignment.centerLeft,
+            child: TweenAnimationBuilder<double>(
+              duration: const Duration(milliseconds: 800),
+              curve: Curves.easeOutCubic,
+              tween: Tween(begin: 0, end: progress),
+              builder: (context, value, child) {
+                return FractionallySizedBox(
+                  widthFactor: value.clamp(0, 1),
+                  heightFactor: 1,
+                  child: child,
+                );
+              },
+              child: ColoredBox(color: color),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ignore: unused_element
+class _LegacyPreviewBottomBar extends StatelessWidget {
+  const _LegacyPreviewBottomBar({
+    required this.selectedIndex,
+    required this.onSelected,
+  });
+
+  final int selectedIndex;
+  final ValueChanged<int> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    const icons = [
+      CupertinoIcons.house_fill,
+      CupertinoIcons.book,
+      CupertinoIcons.chart_bar,
+      CupertinoIcons.person,
+    ];
+    return Container(
+      height: 62,
+      margin: const EdgeInsets.fromLTRB(18, 0, 18, 12),
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xF2FFFFFF),
+        borderRadius: BorderRadius.circular(31),
+        border: Border.all(color: const Color(0xFFF0EEF0)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x18000000),
+            blurRadius: 24,
+            offset: Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          for (var index = 0; index < icons.length; index++)
+            Expanded(
+              child: CupertinoButton(
+                padding: EdgeInsets.zero,
+                onPressed: () {
+                  _selectionHaptic();
+                  onSelected(index);
+                },
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  width: 43,
+                  height: 43,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: index == selectedIndex
+                        ? const Color(0xFFF1F1F3)
+                        : const Color(0x00FFFFFF),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    icons[index],
+                    size: 21,
+                    color: index == selectedIndex ? _black : _secondary,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _NutritionDashboard extends StatelessWidget {
+  const _NutritionDashboard();
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(18, 30, 18, 100),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 400),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 2),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      'Summary',
+                      style: TextStyle(
+                        color: _black,
+                        fontFamily: '.SF Pro Display',
+                        fontSize: 26,
+                        height: 1,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: -0.75,
+                      ),
+                    ),
+                    Text(
+                      'Details',
+                      style: TextStyle(
+                        color: Color(0xFF08745B),
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.fromLTRB(15, 24, 15, 20),
+                decoration: BoxDecoration(
+                  color: CupertinoColors.white,
+                  borderRadius: BorderRadius.circular(22),
+                  border: Border.all(
+                    color: const Color(0xFFDDE1E2),
+                    width: 1.5,
+                  ),
+                ),
+                child: Column(
+                  children: [
+                    SizedBox(
+                      height: 176,
+                      child: Row(
+                        children: [
+                          const Expanded(
+                            child: _CalorieMetric(value: '656', label: 'Eaten'),
+                          ),
+                          TweenAnimationBuilder<double>(
+                            duration: const Duration(milliseconds: 900),
+                            curve: Curves.easeOutCubic,
+                            tween: Tween(begin: 0, end: 656 / 1220),
+                            builder: (context, progress, child) {
+                              return SizedBox(
+                                width: 166,
+                                height: 166,
+                                child: CustomPaint(
+                                  painter: _CalorieRingPainter(
+                                    progress: progress,
+                                  ),
+                                  child: child,
+                                ),
+                              );
+                            },
+                            child: const Center(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    '564',
+                                    style: TextStyle(
+                                      color: _black,
+                                      fontFamily: '.SF Pro Display',
+                                      fontSize: 31,
+                                      height: 1,
+                                      fontWeight: FontWeight.w700,
+                                      letterSpacing: -0.8,
+                                    ),
+                                  ),
+                                  SizedBox(height: 7),
+                                  Text(
+                                    'Remaining',
+                                    style: TextStyle(
+                                      color: _secondary,
+                                      fontSize: 14,
+                                      height: 1,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          const Expanded(
+                            child: _CalorieMetric(value: '0', label: 'Burned'),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    const Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: _MacroBar(
+                            label: 'Carbs',
+                            value: '85 / 136 g',
+                            progress: 85 / 136,
+                            color: _carbGreen,
+                          ),
+                        ),
+                        SizedBox(width: 16),
+                        Expanded(
+                          child: _MacroBar(
+                            label: 'Protein',
+                            value: '42 / 77 g',
+                            progress: 42 / 77,
+                            color: _proteinCoral,
+                          ),
+                        ),
+                        SizedBox(width: 16),
+                        Expanded(
+                          child: _MacroBar(
+                            label: 'Fat',
+                            value: '20 / 40 g',
+                            progress: .5,
+                            color: _fatYellow,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CalorieMetric extends StatelessWidget {
+  const _CalorieMetric({required this.value, required this.label});
+
+  final String value;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          value,
+          style: const TextStyle(
+            color: _black,
+            fontFamily: '.SF Pro Display',
+            fontSize: 21,
+            height: 1,
+            fontWeight: FontWeight.w700,
+            letterSpacing: -0.45,
+          ),
+        ),
+        const SizedBox(height: 7),
+        Text(
+          label,
+          style: const TextStyle(
+            color: _secondary,
+            fontSize: 13,
+            height: 1,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _CalorieRingPainter extends CustomPainter {
+  const _CalorieRingPainter({required this.progress});
+
+  final double progress;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const strokeWidth = 12.0;
+    const startAngle = math.pi * 2 / 3;
+    const sweepAngle = math.pi * 5 / 3;
+    final center = size.center(Offset.zero);
+    final radius = (size.shortestSide - strokeWidth) / 2;
+    final rect = Rect.fromCircle(center: center, radius: radius);
+    final trackPaint = Paint()
+      ..color = _nutritionTrack
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth
+      ..strokeCap = StrokeCap.round;
+    final fillPaint = Paint()
+      ..color = _calorieBlue
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth
+      ..strokeCap = StrokeCap.round;
+
+    canvas.drawArc(rect, startAngle, sweepAngle, false, trackPaint);
+    canvas.drawArc(
+      rect,
+      startAngle,
+      sweepAngle * progress.clamp(0, 1),
+      false,
+      fillPaint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _CalorieRingPainter oldDelegate) {
+    return oldDelegate.progress != progress;
+  }
+}
+
+class _MacroBar extends StatelessWidget {
+  const _MacroBar({
+    required this.label,
+    required this.value,
+    required this.progress,
+    required this.color,
+  });
+
+  final String label;
+  final String value;
+  final double progress;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            color: _secondary,
+            fontSize: 14,
+            height: 1,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        const SizedBox(height: 10),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(99),
+          child: Container(
+            height: 7,
+            color: _nutritionTrack,
+            alignment: Alignment.centerLeft,
+            child: TweenAnimationBuilder<double>(
+              duration: const Duration(milliseconds: 850),
+              curve: Curves.easeOutCubic,
+              tween: Tween(begin: 0, end: progress),
+              builder: (context, animatedProgress, child) {
+                return FractionallySizedBox(
+                  widthFactor: animatedProgress.clamp(0, 1),
+                  heightFactor: 1,
+                  child: child,
+                );
+              },
+              child: ColoredBox(color: color),
+            ),
+          ),
+        ),
+        const SizedBox(height: 9),
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            value,
+            maxLines: 1,
+            style: const TextStyle(
+              color: _black,
+              fontSize: 13.5,
+              height: 1,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _PreviewBottomBar extends StatelessWidget {
+  const _PreviewBottomBar({
+    required this.selectedIndex,
+    required this.onSelected,
+  });
+
+  final int selectedIndex;
+  final ValueChanged<int> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    const icons = [
+      CupertinoIcons.house,
+      CupertinoIcons.tray,
+      CupertinoIcons.chat_bubble,
+      CupertinoIcons.bell,
+    ];
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 390),
+        child: Row(
+          children: [
+            Expanded(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(30),
+                child: BackdropFilter(
+                  filter: ui.ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+                  child: Container(
+                    height: 58,
+                    padding: const EdgeInsets.symmetric(horizontal: 7),
+                    decoration: BoxDecoration(
+                      color: const Color(0xD9FFFFFF),
+                      borderRadius: BorderRadius.circular(30),
+                      border: Border.all(
+                        color: const Color(0xFFFFFFFF),
+                        width: .9,
+                      ),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Color(0x26000000),
+                          blurRadius: 24,
+                          offset: Offset(0, 8),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      children: [
+                        for (var index = 0; index < icons.length; index++)
+                          Expanded(
+                            child: _GlassTabButton(
+                              icon: icons[index],
+                              selected: selectedIndex == index,
+                              onTap: () => onSelected(index),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            ClipOval(
+              child: BackdropFilter(
+                filter: ui.ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+                child: Container(
+                  width: 58,
+                  height: 58,
+                  decoration: BoxDecoration(
+                    color: const Color(0xD9FFFFFF),
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: const Color(0xFFFFFFFF),
+                      width: .9,
+                    ),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Color(0x26000000),
+                        blurRadius: 24,
+                        offset: Offset(0, 8),
+                      ),
+                    ],
+                  ),
+                  child: _GlassTabButton(
+                    icon: CupertinoIcons.search,
+                    selected: selectedIndex == 4,
+                    onTap: () => onSelected(4),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _GlassTabButton extends StatefulWidget {
+  const _GlassTabButton({
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  State<_GlassTabButton> createState() => _GlassTabButtonState();
+}
+
+class _GlassTabButtonState extends State<_GlassTabButton> {
+  bool pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapDown: (_) => setState(() => pressed = true),
+      onTapCancel: () => setState(() => pressed = false),
+      onTapUp: (_) => setState(() => pressed = false),
+      onTap: () {
+        _selectionHaptic();
+        widget.onTap();
+      },
+      child: Center(
+        child: AnimatedScale(
+          scale: pressed ? .9 : 1,
+          duration: const Duration(milliseconds: 110),
+          curve: Curves.easeOutCubic,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 260),
+            curve: Curves.easeOutCubic,
+            width: 44,
+            height: 44,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: widget.selected
+                  ? const Color(0xF2FFFFFF)
+                  : const Color(0x00FFFFFF),
+              shape: BoxShape.circle,
+              boxShadow: widget.selected
+                  ? const [
+                      BoxShadow(
+                        color: Color(0x12000000),
+                        blurRadius: 9,
+                        offset: Offset(0, 2),
+                      ),
+                    ]
+                  : null,
+            ),
+            child: Icon(widget.icon, size: 21, color: _black),
+          ),
+        ),
       ),
     );
   }
@@ -2033,7 +3114,7 @@ class _SocialButton extends StatelessWidget {
         alignment: Alignment.center,
         decoration: BoxDecoration(
           color: CupertinoColors.white,
-          border: Border.all(color: const Color(0xFFDEDEE2), width: 1),
+          border: Border.all(color: const Color(0xFFE5E5E8), width: .75),
           borderRadius: BorderRadius.circular(28),
         ),
         child: SizedBox(
