@@ -1,0 +1,76 @@
+name: Appetize iPhone Preview
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: appetize-preview-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-upload:
+    runs-on: macos-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Download project
+        uses: actions/checkout@v4
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Get packages
+        run: flutter pub get
+
+      - name: Build iPhone Simulator app
+        run: flutter build ios --simulator --release
+
+      - name: Package Simulator app
+        run: |
+          cd build/ios/iphonesimulator
+          ditto -c -k --sequesterRsrc --keepParent Runner.app "$GITHUB_WORKSPACE/Mensura-Simulator.zip"
+
+      - name: Upload preview to Appetize
+        id: appetize
+        env:
+          APPETIZE_API_TOKEN: ${{ secrets.APPETIZE_API_TOKEN }}
+        run: |
+          if [ -z "$APPETIZE_API_TOKEN" ]; then
+            echo "::error::Add APPETIZE_API_TOKEN in GitHub Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+
+          response="$(
+            curl --fail-with-body --silent --show-error \
+              -X POST "https://api.appetize.io/v1/apps" \
+              -H "X-API-KEY: $APPETIZE_API_TOKEN" \
+              -F "file=@Mensura-Simulator.zip" \
+              -F "platform=ios" \
+              -F "note=Mensura preview from commit $GITHUB_SHA" \
+              -F "appPermissions.run=public"
+          )"
+
+          public_key="$(printf '%s' "$response" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("publicKey", ""))')"
+          if [ -z "$public_key" ]; then
+            echo "::error::Appetize did not return a preview identifier."
+            printf '%s\n' "$response"
+            exit 1
+          fi
+
+          preview_url="https://appetize.io/app/$public_key"
+          echo "preview_url=$preview_url" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Mensura iPhone Preview"
+            echo
+            echo "Open the simulator preview: [$preview_url]($preview_url)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Show preview link
+        run: echo "Preview ready at ${{ steps.appetize.outputs.preview_url }}"
