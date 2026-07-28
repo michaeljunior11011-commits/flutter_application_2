@@ -30,7 +30,7 @@ jobs:
         run: flutter pub get
 
       - name: Build iPhone Simulator app
-        run: flutter build ios --simulator --release
+        run: flutter build ios --simulator --debug
 
       - name: Package Simulator app
         run: |
