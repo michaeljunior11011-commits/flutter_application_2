@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/material.dart' show ReorderableListView;
 import 'package:flutter/services.dart';
 
 void main() {
@@ -119,7 +120,11 @@ Future<void> _push(BuildContext context, Widget page) {
 void _openHome(BuildContext context) {
   _tapHaptic();
   Navigator.of(context).pushAndRemoveUntil(
-    CupertinoPageRoute<void>(builder: (_) => const HomeShell()),
+    PageRouteBuilder<void>(
+      transitionDuration: Duration.zero,
+      reverseTransitionDuration: Duration.zero,
+      pageBuilder: (_, animation, secondaryAnimation) => const HomeShell(),
+    ),
     (route) => false,
   );
 }
@@ -1296,33 +1301,36 @@ class _MeasurementsPageState extends State<MeasurementsPage> {
           const _Heading('What are your measurements?'),
           const _Description('Choose your current weight and height.'),
           const SizedBox(height: 22),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: _MeasurementWheel(
-                  label: 'Weight',
-                  unit: 'kg',
-                  values: weights,
-                  controller: weightController,
-                  onChanged: (value) {
-                    widget.data.weightKg = value.toDouble();
-                  },
+          Directionality(
+            textDirection: TextDirection.ltr,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: _MeasurementWheel(
+                    label: 'Weight',
+                    unit: 'kg',
+                    values: weights,
+                    controller: weightController,
+                    onChanged: (value) {
+                      widget.data.weightKg = value.toDouble();
+                    },
+                  ),
                 ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: _MeasurementWheel(
-                  label: 'Height',
-                  unit: 'cm',
-                  values: heights,
-                  controller: heightController,
-                  onChanged: (value) {
-                    widget.data.heightCm = value.toDouble();
-                  },
+                const SizedBox(width: 16),
+                Expanded(
+                  child: _MeasurementWheel(
+                    label: 'Height',
+                    unit: 'cm',
+                    values: heights,
+                    controller: heightController,
+                    onChanged: (value) {
+                      widget.data.heightCm = value.toDouble();
+                    },
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ],
       ),
@@ -1375,11 +1383,7 @@ class _MeasurementWheel extends StatelessWidget {
               itemExtent: 38,
               useMagnifier: true,
               magnification: 1.04,
-              selectionOverlay: const CupertinoPickerDefaultSelectionOverlay(
-                background: Color(0x0A000000),
-                capStartEdge: false,
-                capEndEdge: false,
-              ),
+              selectionOverlay: null,
               onSelectedItemChanged: (index) {
                 _selectionHaptic();
                 onChanged(values[index]);
@@ -2296,14 +2300,60 @@ class HomeShell extends StatefulWidget {
 
 class _HomeShellState extends State<HomeShell> {
   int selectedIndex = 0;
+  int waterMl = 1000;
 
   @override
   void initState() {
     super.initState();
+    _nativeShellChannel.setMethodCallHandler((call) async {
+      if (call.method == 'waterAmountSelected') {
+        final amount = (call.arguments as num?)?.round() ?? 0;
+        if (mounted && amount > 0) {
+          setState(() => waterMl = (waterMl + amount).clamp(0, 5000));
+        }
+      }
+    });
     if (Platform.isIOS) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        _nativeShellChannel.invokeMethod<void>('showTabs');
+        Future<void>.delayed(const Duration(milliseconds: 320), () {
+          if (mounted) {
+            _nativeShellChannel.invokeMethod<void>('showTabs');
+          }
+        });
       });
+    }
+  }
+
+  Future<void> _openWaterPicker() async {
+    _tapHaptic();
+    if (Platform.isIOS) {
+      await _nativeShellChannel.invokeMethod<void>(
+        'showWaterPicker',
+        <String, int>{'current': 330},
+      );
+      return;
+    }
+    if (!mounted) return;
+    final amount = await showCupertinoModalPopup<int>(
+      context: context,
+      builder: (context) => CupertinoActionSheet(
+        title: const Text('Add water'),
+        message: const Text('Choose an amount'),
+        actions: [
+          for (final value in const [250, 330, 500, 750])
+            CupertinoActionSheetAction(
+              onPressed: () => Navigator.of(context).pop(value),
+              child: Text('$value ml'),
+            ),
+        ],
+        cancelButton: CupertinoActionSheetAction(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+      ),
+    );
+    if (amount != null && mounted) {
+      setState(() => waterMl = (waterMl + amount).clamp(0, 5000));
     }
   }
 
@@ -2319,7 +2369,10 @@ class _HomeShellState extends State<HomeShell> {
             Positioned.fill(
               bottom: 0,
               child: selectedIndex == 0
-                  ? const _NutritionDashboard()
+                  ? _NutritionDashboard(
+                      waterMl: waterMl,
+                      onAddWater: _openWaterPicker,
+                    )
                   : const SizedBox.expand(),
             ),
             if (showPreviewTabs)
@@ -2631,157 +2684,853 @@ class _LegacyPreviewBottomBar extends StatelessWidget {
   }
 }
 
-class _NutritionDashboard extends StatelessWidget {
-  const _NutritionDashboard();
+enum _DashboardSectionType { waterAndLog, steps, weightTrend, sleep }
+
+class _NutritionDashboard extends StatefulWidget {
+  const _NutritionDashboard({required this.waterMl, required this.onAddWater});
+
+  final int waterMl;
+  final VoidCallback onAddWater;
 
   @override
-  Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(18, 30, 18, 100),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 400),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 2),
+  State<_NutritionDashboard> createState() => _NutritionDashboardState();
+}
+
+class _NutritionDashboardState extends State<_NutritionDashboard> {
+  final sections = <_DashboardSectionType>[
+    _DashboardSectionType.waterAndLog,
+    _DashboardSectionType.steps,
+  ];
+  final blockedPointers = <int>{};
+
+  Timer? editHoldTimer;
+  Offset? pointerOrigin;
+  bool editing = false;
+  bool showQuickLog = true;
+
+  @override
+  void dispose() {
+    editHoldTimer?.cancel();
+    super.dispose();
+  }
+
+  void _startEditHold(PointerDownEvent event) {
+    if (editing || blockedPointers.contains(event.pointer)) return;
+    pointerOrigin = event.position;
+    editHoldTimer?.cancel();
+    editHoldTimer = Timer(const Duration(seconds: 5), () {
+      if (!mounted) return;
+      HapticFeedback.heavyImpact();
+      setState(() => editing = true);
+    });
+  }
+
+  void _trackEditHold(PointerMoveEvent event) {
+    final origin = pointerOrigin;
+    if (origin != null && (event.position - origin).distance > 7) {
+      _cancelEditHold();
+    }
+  }
+
+  void _cancelEditHold([PointerEvent? event]) {
+    editHoldTimer?.cancel();
+    editHoldTimer = null;
+    pointerOrigin = null;
+  }
+
+  Widget _protectCard(Widget child) {
+    return Listener(
+      onPointerDown: (event) {
+        blockedPointers.add(event.pointer);
+        _cancelEditHold();
+      },
+      onPointerUp: (event) => blockedPointers.remove(event.pointer),
+      onPointerCancel: (event) => blockedPointers.remove(event.pointer),
+      child: child,
+    );
+  }
+
+  void _reorderItem(int oldIndex, int newIndex) {
+    setState(() {
+      final section = sections.removeAt(oldIndex);
+      sections.insert(newIndex, section);
+    });
+    _selectionHaptic();
+  }
+
+  Future<void> _addCard() async {
+    final available = _DashboardSectionType.values
+        .where((section) => !sections.contains(section))
+        .toList();
+    if (available.isEmpty) return;
+    final selected = await showCupertinoModalPopup<_DashboardSectionType>(
+      context: context,
+      builder: (context) => CupertinoActionSheet(
+        title: const Text('Add a dashboard card'),
+        actions: [
+          for (final section in available)
+            CupertinoActionSheetAction(
+              onPressed: () => Navigator.of(context).pop(section),
+              child: Text(_sectionTitle(section)),
+            ),
+        ],
+        cancelButton: CupertinoActionSheetAction(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+      ),
+    );
+    if (selected != null && mounted) {
+      setState(() => sections.add(selected));
+    }
+  }
+
+  String _sectionTitle(_DashboardSectionType section) {
+    return switch (section) {
+      _DashboardSectionType.waterAndLog => 'Water & Log',
+      _DashboardSectionType.steps => 'Steps',
+      _DashboardSectionType.weightTrend => 'Weight trend',
+      _DashboardSectionType.sleep => 'Sleep',
+    };
+  }
+
+  Widget _section(_DashboardSectionType section, int index) {
+    final content = switch (section) {
+      _DashboardSectionType.waterAndLog => _WaterAndLogSection(
+        waterMl: widget.waterMl,
+        showQuickLog: showQuickLog,
+        editing: editing,
+        onToggleQuickLog: () => setState(() => showQuickLog = !showQuickLog),
+        onAddWater: widget.onAddWater,
+      ),
+      _DashboardSectionType.steps => const _StepsSection(),
+      _DashboardSectionType.weightTrend => const _SimpleDashboardCard(
+        title: 'Weight trend',
+        value: '70.0 kg',
+        detail: 'No change this week',
+        icon: CupertinoIcons.chart_bar_alt_fill,
+        accent: Color(0xFF7F68D9),
+      ),
+      _DashboardSectionType.sleep => const _SimpleDashboardCard(
+        title: 'Sleep',
+        value: '7 h 42 m',
+        detail: 'Last night',
+        icon: CupertinoIcons.moon_fill,
+        accent: Color(0xFF4D72C9),
+      ),
+    };
+
+    return KeyedSubtree(
+      key: ValueKey(section),
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 18),
+        child: Stack(
+          children: [
+            _protectCard(content),
+            if (editing)
+              Positioned(
+                right: 8,
+                top: 8,
                 child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    Text(
-                      'Summary',
-                      style: TextStyle(
-                        color: _black,
-                        fontFamily: '.SF Pro Display',
-                        fontSize: 26,
-                        height: 1,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: -0.75,
+                    CupertinoButton(
+                      padding: EdgeInsets.zero,
+                      minimumSize: const Size(34, 34),
+                      onPressed: () => setState(() => sections.remove(section)),
+                      child: const Icon(
+                        CupertinoIcons.minus_circle_fill,
+                        color: CupertinoColors.systemRed,
+                        size: 25,
                       ),
                     ),
-                    Text(
-                      'Details',
-                      style: TextStyle(
-                        color: Color(0xFF08745B),
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
+                    ReorderableDragStartListener(
+                      index: index,
+                      child: const SizedBox(
+                        width: 34,
+                        height: 34,
+                        child: Icon(
+                          CupertinoIcons.line_horizontal_3,
+                          color: _secondary,
+                          size: 23,
+                        ),
                       ),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(height: 14),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.fromLTRB(15, 24, 15, 20),
-                decoration: BoxDecoration(
-                  color: CupertinoColors.white,
-                  borderRadius: BorderRadius.circular(22),
-                  border: Border.all(
-                    color: const Color(0xFFDDE1E2),
-                    width: 1.5,
-                  ),
-                ),
-                child: Column(
-                  children: [
-                    SizedBox(
-                      height: 176,
-                      child: Row(
-                        children: [
-                          const Expanded(
-                            child: _CalorieMetric(value: '656', label: 'Eaten'),
-                          ),
-                          TweenAnimationBuilder<double>(
-                            duration: const Duration(milliseconds: 900),
-                            curve: Curves.easeOutCubic,
-                            tween: Tween(begin: 0, end: 656 / 1220),
-                            builder: (context, progress, child) {
-                              return SizedBox(
-                                width: 166,
-                                height: 166,
-                                child: CustomPaint(
-                                  painter: _CalorieRingPainter(
-                                    progress: progress,
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: _startEditHold,
+      onPointerMove: _trackEditHold,
+      onPointerUp: _cancelEditHold,
+      onPointerCancel: _cancelEditHold,
+      child: ColoredBox(
+        color: const Color(0xFFF8F6F9),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.only(bottom: 120),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 428),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _protectCard(const _FigmaNutritionPanel()),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(13, 18, 13, 0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (editing) ...[
+                          Container(
+                            margin: const EdgeInsets.only(bottom: 16),
+                            padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
+                            decoration: BoxDecoration(
+                              color: CupertinoColors.white,
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            child: Row(
+                              children: [
+                                const Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Edit Dashboard',
+                                        style: TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                      SizedBox(height: 2),
+                                      Text(
+                                        'Drag cards to change their order.',
+                                        style: TextStyle(
+                                          color: _secondary,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ],
                                   ),
-                                  child: child,
                                 ),
-                              );
-                            },
-                            child: const Center(
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    '564',
+                                CupertinoButton(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 8,
+                                  ),
+                                  onPressed: () =>
+                                      setState(() => editing = false),
+                                  child: const Text(
+                                    'Done',
                                     style: TextStyle(
                                       color: _black,
-                                      fontFamily: '.SF Pro Display',
-                                      fontSize: 31,
-                                      height: 1,
-                                      fontWeight: FontWeight.w700,
-                                      letterSpacing: -0.8,
+                                      fontWeight: FontWeight.w600,
                                     ),
                                   ),
-                                  SizedBox(height: 7),
-                                  Text(
-                                    'Remaining',
-                                    style: TextStyle(
-                                      color: _secondary,
-                                      fontSize: 14,
-                                      height: 1,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  ),
-                                ],
-                              ),
+                                ),
+                              ],
                             ),
                           ),
-                          const Expanded(
-                            child: _CalorieMetric(value: '0', label: 'Burned'),
-                          ),
                         ],
-                      ),
+                        ReorderableListView.builder(
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          buildDefaultDragHandles: false,
+                          itemCount: sections.length,
+                          onReorderItem: _reorderItem,
+                          itemBuilder: (context, index) =>
+                              _section(sections[index], index),
+                        ),
+                        if (editing)
+                          CupertinoButton(
+                            color: CupertinoColors.white,
+                            borderRadius: BorderRadius.circular(14),
+                            onPressed: _addCard,
+                            child: const Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  CupertinoIcons.add_circled_solid,
+                                  color: _black,
+                                  size: 20,
+                                ),
+                                SizedBox(width: 8),
+                                Text(
+                                  'Add card',
+                                  style: TextStyle(
+                                    color: _black,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        const SizedBox(height: 280),
+                      ],
                     ),
-                    const SizedBox(height: 14),
-                    const Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FigmaNutritionPanel extends StatelessWidget {
+  const _FigmaNutritionPanel();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: CupertinoColors.white,
+      padding: const EdgeInsets.fromLTRB(14, 16, 14, 30),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Sunday, 25 AUGUST',
+            style: TextStyle(color: _secondary, fontSize: 16),
+          ),
+          const SizedBox(height: 1),
+          const Text(
+            'Today',
+            style: TextStyle(
+              color: _black,
+              fontFamily: '.SF Pro Display',
+              fontSize: 29,
+              fontWeight: FontWeight.w600,
+              letterSpacing: -0.7,
+            ),
+          ),
+          const SizedBox(height: 22),
+          SizedBox(
+            height: 176,
+            child: Row(
+              children: [
+                const Expanded(
+                  child: _CalorieMetric(value: '100', label: 'Eat'),
+                ),
+                TweenAnimationBuilder<double>(
+                  duration: const Duration(milliseconds: 850),
+                  curve: Curves.easeOutCubic,
+                  tween: Tween(begin: 0, end: 100 / 2900),
+                  builder: (context, progress, child) {
+                    return SizedBox(
+                      width: 170,
+                      height: 170,
+                      child: CustomPaint(
+                        painter: _CalorieRingPainter(progress: progress),
+                        child: child,
+                      ),
+                    );
+                  },
+                  child: const Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        Expanded(
-                          child: _MacroBar(
-                            label: 'Carbs',
-                            value: '85 / 136 g',
-                            progress: 85 / 136,
-                            color: _carbGreen,
+                        Text(
+                          '2600',
+                          style: TextStyle(
+                            color: _black,
+                            fontFamily: '.SF Pro Display',
+                            fontSize: 34,
+                            height: 1,
+                            fontWeight: FontWeight.w400,
+                            letterSpacing: -0.8,
                           ),
                         ),
-                        SizedBox(width: 16),
-                        Expanded(
-                          child: _MacroBar(
-                            label: 'Protein',
-                            value: '42 / 77 g',
-                            progress: 42 / 77,
-                            color: _proteinCoral,
-                          ),
-                        ),
-                        SizedBox(width: 16),
-                        Expanded(
-                          child: _MacroBar(
-                            label: 'Fat',
-                            value: '20 / 40 g',
-                            progress: .5,
-                            color: _fatYellow,
+                        SizedBox(height: 7),
+                        Text(
+                          'Remaining',
+                          style: TextStyle(
+                            color: _secondary,
+                            fontSize: 16,
+                            height: 1,
                           ),
                         ),
                       ],
                     ),
-                  ],
+                  ),
+                ),
+                const Expanded(
+                  child: _CalorieMetric(value: '2900', label: 'Target'),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          const Row(
+            children: [
+              Expanded(
+                child: _MacroBar(
+                  label: 'Protein',
+                  value: '54 / 120g',
+                  progress: .60,
+                  color: _proteinCoral,
+                ),
+              ),
+              SizedBox(width: 41),
+              Expanded(
+                child: _MacroBar(
+                  label: 'Fat',
+                  value: '31 / 60g',
+                  progress: .49,
+                  color: _fatYellow,
+                ),
+              ),
+              SizedBox(width: 41),
+              Expanded(
+                child: _MacroBar(
+                  label: 'Carbs',
+                  value: '76 / 350g',
+                  progress: .67,
+                  color: _carbGreen,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _WaterAndLogSection extends StatelessWidget {
+  const _WaterAndLogSection({
+    required this.waterMl,
+    required this.showQuickLog,
+    required this.editing,
+    required this.onToggleQuickLog,
+    required this.onAddWater,
+  });
+
+  final int waterMl;
+  final bool showQuickLog;
+  final bool editing;
+  final VoidCallback onToggleQuickLog;
+  final VoidCallback onAddWater;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Expanded(
+              child: Text(
+                'Water & Log',
+                style: TextStyle(
+                  color: _black,
+                  fontFamily: '.SF Pro Display',
+                  fontSize: 24,
+                  fontWeight: FontWeight.w500,
+                  letterSpacing: -0.4,
+                ),
+              ),
+            ),
+            if (editing)
+              CupertinoButton(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                onPressed: onToggleQuickLog,
+                child: Text(
+                  showQuickLog ? 'Hide log' : 'Show log',
+                  style: const TextStyle(
+                    color: _secondary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            if (!showQuickLog) {
+              return Align(
+                alignment: Alignment.centerRight,
+                child: SizedBox(
+                  width: constraints.maxWidth * .45,
+                  child: _WaterCard(
+                    waterMl: waterMl,
+                    expanded: true,
+                    onAddWater: onAddWater,
+                  ),
+                ),
+              );
+            }
+            return Row(
+              children: [
+                const Expanded(child: _QuickLogCard()),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: _WaterCard(
+                    waterMl: waterMl,
+                    expanded: false,
+                    onAddWater: onAddWater,
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ],
+    );
+  }
+}
+
+class _QuickLogCard extends StatelessWidget {
+  const _QuickLogCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 200,
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFFDFE),
+        borderRadius: BorderRadius.circular(8),
+        boxShadow: const [BoxShadow(color: Color(0x14000000), blurRadius: 8)],
+      ),
+    );
+  }
+}
+
+class _WaterCard extends StatelessWidget {
+  const _WaterCard({
+    required this.waterMl,
+    required this.expanded,
+    required this.onAddWater,
+  });
+
+  final int waterMl;
+  final bool expanded;
+  final VoidCallback onAddWater;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onLongPress: onAddWater,
+      child: Container(
+        height: 200,
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          color: const Color(0xFFFFFDFE),
+          borderRadius: BorderRadius.circular(8),
+          boxShadow: const [BoxShadow(color: Color(0x14000000), blurRadius: 8)],
+        ),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final gaugeWidth = expanded ? constraints.maxWidth * .45 : 30.0;
+            return Stack(
+              children: [
+                Positioned.fill(
+                  right: gaugeWidth,
+                  child: Column(
+                    children: [
+                      const SizedBox(height: 5),
+                      const Text(
+                        'Water',
+                        style: TextStyle(
+                          color: _black,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(height: 1),
+                      Text(
+                        '${widgetSafeWater(waterMl)}ml',
+                        style: const TextStyle(
+                          color: _black,
+                          fontFamily: '.SF Pro Display',
+                          fontSize: 19,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const Spacer(),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(14, 0, 14, 24),
+                        child: SizedBox(
+                          width: double.infinity,
+                          height: 29,
+                          child: CupertinoButton(
+                            padding: EdgeInsets.zero,
+                            color: const Color(0xFF0166ED),
+                            borderRadius: BorderRadius.circular(12),
+                            onPressed: onAddWater,
+                            child: const Text(
+                              '+330ml',
+                              style: TextStyle(
+                                color: CupertinoColors.white,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Positioned(
+                  top: 0,
+                  right: 0,
+                  bottom: 0,
+                  width: gaugeWidth,
+                  child: _WaterWaveGauge(
+                    progress: (waterMl / 1500).clamp(0, 1),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  static int widgetSafeWater(int value) => value.clamp(0, 5000);
+}
+
+class _WaterWaveGauge extends StatefulWidget {
+  const _WaterWaveGauge({required this.progress});
+
+  final double progress;
+
+  @override
+  State<_WaterWaveGauge> createState() => _WaterWaveGaugeState();
+}
+
+class _WaterWaveGaugeState extends State<_WaterWaveGauge>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController controller;
+
+  @override
+  void initState() {
+    super.initState();
+    controller = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 6),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (context, child) => CustomPaint(
+        painter: _WaterWavePainter(
+          progress: widget.progress,
+          phase: controller.value * math.pi * 2,
+        ),
+      ),
+    );
+  }
+}
+
+class _WaterWavePainter extends CustomPainter {
+  const _WaterWavePainter({required this.progress, required this.phase});
+
+  final double progress;
+  final double phase;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()..color = const Color(0xFFBAD9FE),
+    );
+
+    void drawWave(Color color, double phaseOffset, double amplitude) {
+      final waterTop = size.height * (1 - progress);
+      final path = Path()..moveTo(0, waterTop);
+      for (double x = 0; x <= size.width; x += 1) {
+        final y =
+            waterTop +
+            math.sin((x / size.width) * math.pi * 2 + phase + phaseOffset) *
+                amplitude;
+        path.lineTo(x, y);
+      }
+      path
+        ..lineTo(size.width, size.height)
+        ..lineTo(0, size.height)
+        ..close();
+      canvas.drawPath(path, Paint()..color = color);
+    }
+
+    drawWave(const Color(0x99096FF0), math.pi, 2.3);
+    drawWave(const Color(0xFF0166ED), 0, 1.8);
+
+    final tickPaint = Paint()
+      ..color = const Color(0xFF97C2FF)
+      ..strokeWidth = 2
+      ..strokeCap = StrokeCap.round;
+    for (var i = 1; i < 5; i++) {
+      final y = size.height * i / 5;
+      canvas.drawLine(
+        Offset(size.width * .36, y),
+        Offset(size.width * .68, y),
+        tickPaint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _WaterWavePainter oldDelegate) {
+    return oldDelegate.progress != progress || oldDelegate.phase != phase;
+  }
+}
+
+class _StepsSection extends StatelessWidget {
+  const _StepsSection();
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Steps',
+          style: TextStyle(
+            color: _black,
+            fontFamily: '.SF Pro Display',
+            fontSize: 24,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          height: 138,
+          padding: const EdgeInsets.fromLTRB(7, 4, 7, 28),
+          color: const Color(0xFFFFFDFE),
+          child: Column(
+            children: [
+              const Text(
+                '0 Steps',
+                style: TextStyle(
+                  color: _black,
+                  fontSize: 21,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(height: 1),
+              const Text(
+                '0 km | 0 cal',
+                style: TextStyle(color: _secondary, fontSize: 16),
+              ),
+              const Spacer(),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(52),
+                child: Container(
+                  height: 22,
+                  color: const Color(0xFFF3EFF4),
+                  padding: const EdgeInsets.all(2),
+                  alignment: Alignment.centerLeft,
+                  child: FractionallySizedBox(
+                    widthFactor: .66,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF9751B0),
+                        borderRadius: BorderRadius.circular(52),
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ],
           ),
         ),
+      ],
+    );
+  }
+}
+
+class _SimpleDashboardCard extends StatelessWidget {
+  const _SimpleDashboardCard({
+    required this.title,
+    required this.value,
+    required this.detail,
+    required this.icon,
+    required this.accent,
+  });
+
+  final String title;
+  final String value;
+  final String detail;
+  final IconData icon;
+  final Color accent;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(minHeight: 126),
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: CupertinoColors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: const [BoxShadow(color: Color(0x10000000), blurRadius: 10)],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: accent.withValues(alpha: .12),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, color: accent, size: 22),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: _secondary,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  value,
+                  style: const TextStyle(
+                    color: _black,
+                    fontFamily: '.SF Pro Display',
+                    fontSize: 23,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  detail,
+                  style: const TextStyle(color: _secondary, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
