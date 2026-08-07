@@ -123,10 +123,37 @@ void _openHome(BuildContext context) {
     PageRouteBuilder<void>(
       transitionDuration: Duration.zero,
       reverseTransitionDuration: Duration.zero,
-      pageBuilder: (_, animation, secondaryAnimation) => const HomeShell(),
+      pageBuilder: (_, animation, secondaryAnimation) =>
+          Platform.isIOS ? const NativeShellBridge() : const HomeShell(),
     ),
     (route) => false,
   );
+}
+
+class NativeShellBridge extends StatefulWidget {
+  const NativeShellBridge({super.key});
+
+  @override
+  State<NativeShellBridge> createState() => _NativeShellBridgeState();
+}
+
+class _NativeShellBridgeState extends State<NativeShellBridge> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(_nativeShellChannel.invokeMethod<void>('showTabs'));
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return const CupertinoPageScaffold(
+      backgroundColor: CupertinoColors.white,
+      child: SizedBox.expand(),
+    );
+  }
 }
 
 class SplashPage extends StatefulWidget {
