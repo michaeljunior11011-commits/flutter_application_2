@@ -1681,9 +1681,9 @@ private struct FoodConfirmationView: View {
         LabeledContent("Product", value: food.name)
         if !food.brand.isEmpty { LabeledContent("Brand", value: food.brand) }
         LabeledContent("Calories", value: "\(food.calories) kcal")
-        LabeledContent("Protein", value: "\(food.protein, specifier: "%.1f") g")
-        LabeledContent("Fat", value: "\(food.fat, specifier: "%.1f") g")
-        LabeledContent("Carbs", value: "\(food.carbs, specifier: "%.1f") g")
+        LabeledContent("Protein", value: String(format: "%.1f g", food.protein))
+        LabeledContent("Fat", value: String(format: "%.1f g", food.fat))
+        LabeledContent("Carbs", value: String(format: "%.1f g", food.carbs))
       }
       Button("Add to today", action: onAdd)
         .fontWeight(.semibold)
