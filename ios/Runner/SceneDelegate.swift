@@ -94,7 +94,7 @@ private final class MensuraStore: ObservableObject {
   @Published var weightGoalKg = 75.0
   @Published var steps = 0
   @Published var stepsGoal = 10_000
-  @Published var dashboardCards: [DashboardCard] = [.weight, .water, .steps, .empty]
+  @Published var dashboardCards: [DashboardCard] = [.weight, .water, .steps]
   @Published var foodEntries: [FoodEntry] = []
   @Published var waterReminders = true
   @Published var calorieReminders = false
@@ -126,7 +126,9 @@ private final class MensuraStore: ObservableObject {
     weightGoalKg = snapshot.weightGoalKg
     steps = snapshot.steps
     stepsGoal = snapshot.stepsGoal
-    dashboardCards = snapshot.dashboardCards
+    // Older previews stored a synthetic empty card. Empty space is now created
+    // by the adaptive grid, so it must never appear as a visible dashboard card.
+    dashboardCards = snapshot.dashboardCards.filter { $0 != .empty }
     foodEntries = snapshot.foodEntries
     waterReminders = snapshot.waterReminders
     calorieReminders = snapshot.calorieReminders
@@ -217,12 +219,8 @@ private final class MensuraStore: ObservableObject {
   }
 
   func showCard(_ card: DashboardCard) {
-    guard !dashboardCards.contains(card) else { return }
-    if let emptyIndex = dashboardCards.firstIndex(of: .empty) {
-      dashboardCards.insert(card, at: emptyIndex)
-    } else {
-      dashboardCards.append(card)
-    }
+    guard card != .empty, !dashboardCards.contains(card) else { return }
+    dashboardCards.append(card)
     save()
   }
 
@@ -372,55 +370,184 @@ private struct MensuraNativeTabShell: View {
 
   @State private var selection = MensuraTab.home
   @State private var previousSelection = MensuraTab.home
-  @State private var isAddPresented = false
+  @State private var isAddMenuPresented = false
+  @State private var activeAddRoute: AddRoute?
 
   var body: some View {
-    TabView(selection: $selection) {
-      Tab(value: MensuraTab.home) {
-        MensuraHomeView(store: store)
-      } label: {
-        Label(
-          "Home",
-          image: selection == .home ? "HomeTabIconFilled" : "HomeTabIcon"
-        )
-      }
+    GeometryReader { geometry in
+      ZStack(alignment: .bottomTrailing) {
+        TabView(selection: $selection) {
+          Tab(value: MensuraTab.home) {
+            MensuraHomeView(store: store)
+          } label: {
+            Label {
+              Text("Home")
+            } icon: {
+              AnimatedTabIcon(
+                outline: "HomeTabIcon",
+                filled: "HomeTabIconFilled",
+                isSelected: selection == .home
+              )
+            }
+          }
 
-      Tab(value: MensuraTab.analytics) {
-        MensuraAnalyticsView(store: store)
-      } label: {
-        Label(
-          "Analytics",
-          image: selection == .analytics ? "AnalyticsTabIconFilled" : "AnalyticsTabIcon"
-        )
-      }
+          Tab(value: MensuraTab.analytics) {
+            MensuraAnalyticsView(store: store)
+          } label: {
+            Label {
+              Text("Analytics")
+            } icon: {
+              AnimatedTabIcon(
+                outline: "AnalyticsTabIcon",
+                filled: "AnalyticsTabIconFilled",
+                isSelected: selection == .analytics
+              )
+            }
+          }
 
-      Tab("More", systemImage: selection == .more ? "ellipsis.circle.fill" : "ellipsis.circle", value: MensuraTab.more) {
-        MensuraMoreView(store: store)
-      }
+          Tab(value: MensuraTab.more) {
+            MensuraMoreView(store: store)
+          } label: {
+            Label {
+              Text("More")
+            } icon: {
+              AnimatedSystemTabIcon(
+                outline: "ellipsis.circle",
+                filled: "ellipsis.circle.fill",
+                isSelected: selection == .more
+              )
+            }
+          }
 
-      Tab(value: MensuraTab.add, role: .search) {
-        Color.clear
-      } label: {
-        Label("Add", systemImage: "plus")
+          // The search-role tab reserves Apple's detached iOS 26 position.
+          // Its content is covered by our explicit black action button below.
+          Tab(value: MensuraTab.add, role: .search) {
+            Color.clear
+          } label: {
+            Label("Add", systemImage: "plus")
+              .opacity(0.001)
+          }
+        }
+        .tabBarMinimizeBehavior(.never)
+        .tint(.black)
+        .background(Color(uiColor: .systemBackground).ignoresSafeArea())
+        .onChange(of: selection) { _, newValue in
+          if newValue == .add {
+            selection = previousSelection
+            toggleAddMenu()
+          } else {
+            previousSelection = newValue
+          }
+        }
+
+        if isAddMenuPresented {
+          Color.black.opacity(0.24)
+            .ignoresSafeArea()
+            .onTapGesture { closeAddMenu() }
+            .transition(.opacity)
+
+          AddQuickMenuCard { route in
+            closeAddMenu()
+            DispatchQueue.main.async { activeAddRoute = route }
+          }
+          .padding(.horizontal, 14)
+          .padding(.bottom, 96)
+          .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
+
+        Button(action: toggleAddMenu) {
+          Image(systemName: "plus")
+            .font(.system(size: 27, weight: .medium))
+            .foregroundStyle(.white)
+            .rotationEffect(.degrees(isAddMenuPresented ? 45 : 0))
+            .frame(width: 66, height: 66)
+            .background(Color.black, in: Circle())
+            .shadow(color: .black.opacity(0.14), radius: 13, y: 7)
+        }
+        .buttonStyle(.plain)
+        .contentShape(Circle())
+        .accessibilityLabel(isAddMenuPresented ? "Close add menu" : "Add")
+        .padding(.trailing, 14)
+        .padding(.bottom, 8)
+        .animation(.smooth(duration: 0.26), value: isAddMenuPresented)
+      }
+      .overlay(alignment: .top) {
+        // Keep scrolling nutrition content out of the Dynamic Island/status bar.
+        Color.white
+          .frame(height: max(geometry.safeAreaInsets.top, 0))
+          .ignoresSafeArea(edges: .top)
+          .allowsHitTesting(false)
+      }
+      .animation(.smooth(duration: 0.28), value: isAddMenuPresented)
+      .fullScreenCover(item: $activeAddRoute) { route in
+        AddDestinationView(route: route, store: store)
       }
     }
-    .tabBarMinimizeBehavior(.never)
-    .tint(.black)
-    .background(Color(uiColor: .systemBackground).ignoresSafeArea())
-    .onChange(of: selection) { _, newValue in
-      if newValue == .add {
-        UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-        selection = previousSelection
-        DispatchQueue.main.async { isAddPresented = true }
-      } else {
-        previousSelection = newValue
-      }
+  }
+
+  private func toggleAddMenu() {
+    UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+    withAnimation(.smooth(duration: 0.28)) {
+      isAddMenuPresented.toggle()
     }
-    .sheet(isPresented: $isAddPresented) {
-      AddMenuView(store: store)
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
+  }
+
+  private func closeAddMenu() {
+    withAnimation(.smooth(duration: 0.24)) {
+      isAddMenuPresented = false
     }
+  }
+}
+
+@available(iOS 26.0, *)
+private struct AnimatedTabIcon: View {
+  let outline: String
+  let filled: String
+  let isSelected: Bool
+
+  var body: some View {
+    ZStack {
+      Image(outline)
+        .renderingMode(.template)
+        .resizable()
+        .scaledToFit()
+      Image(filled)
+        .renderingMode(.template)
+        .resizable()
+        .scaledToFit()
+        .mask {
+          VStack(spacing: 0) {
+            Spacer(minLength: 0)
+            Rectangle()
+              .frame(height: isSelected ? 25 : 0)
+          }
+        }
+    }
+    .frame(width: 25, height: 25)
+    .animation(.smooth(duration: 0.28), value: isSelected)
+  }
+}
+
+@available(iOS 26.0, *)
+private struct AnimatedSystemTabIcon: View {
+  let outline: String
+  let filled: String
+  let isSelected: Bool
+
+  var body: some View {
+    ZStack {
+      Image(systemName: outline)
+      Image(systemName: filled)
+        .mask {
+          VStack(spacing: 0) {
+            Spacer(minLength: 0)
+            Rectangle()
+              .frame(height: isSelected ? 25 : 0)
+          }
+        }
+    }
+    .frame(width: 25, height: 25)
+    .animation(.smooth(duration: 0.28), value: isSelected)
   }
 }
 
@@ -434,10 +561,17 @@ private struct MensuraHomeView: View {
   @State private var isWaterPickerPresented = false
   @State private var isCardLibraryPresented = false
 
-  private let columns = [
-    GridItem(.flexible(), spacing: 10),
-    GridItem(.flexible(), spacing: 10),
-  ]
+  private var visibleCards: [DashboardCard] {
+    store.dashboardCards.filter { $0 != .empty }
+  }
+
+  private var primaryCards: [DashboardCard] {
+    Array(visibleCards.prefix(2))
+  }
+
+  private var secondaryCards: [DashboardCard] {
+    Array(visibleCards.dropFirst(2))
+  }
 
   var body: some View {
     ScrollView(.vertical) {
@@ -447,39 +581,14 @@ private struct MensuraHomeView: View {
         VStack(alignment: .leading, spacing: 12) {
           if isEditingDashboard { editBanner }
 
-          LazyVGrid(columns: columns, spacing: 10) {
-            ForEach(Array(store.dashboardCards.enumerated()), id: \.element.id) { index, card in
-              if index == 0 {
-                dashboardSectionTitle("Water & Weight")
-                  .gridCellColumns(2)
-              } else if index == 2 {
-                dashboardSectionTitle("Steps & anything")
-                  .gridCellColumns(2)
-              }
+          if !primaryCards.isEmpty {
+            dashboardSectionTitle("Water & Weight")
+            dashboardGrid(primaryCards)
+          }
 
-              dashboardCard(card)
-                .frame(height: 200)
-                .overlay(alignment: .topTrailing) {
-                  if isEditingDashboard && card != .empty {
-                    editControls(for: card)
-                  }
-                }
-                .draggable(card.rawValue) {
-                  Text(card.title)
-                    .font(.headline)
-                    .padding(12)
-                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-                }
-                .dropDestination(for: String.self) { items, _ in
-                  guard
-                    isEditingDashboard,
-                    let raw = items.first,
-                    let source = DashboardCard(rawValue: raw)
-                  else { return false }
-                  store.moveCard(source, before: card)
-                  return true
-                }
-            }
+          if !secondaryCards.isEmpty {
+            dashboardSectionTitle("Steps & anything")
+            dashboardGrid(secondaryCards)
           }
 
           if isEditingDashboard {
@@ -504,10 +613,11 @@ private struct MensuraHomeView: View {
         .padding(.horizontal, 14)
         .padding(.top, 14)
         .background(
-          Color.clear
+          Color(red: 248 / 255, green: 246 / 255, blue: 249 / 255)
             .contentShape(Rectangle())
             .onLongPressGesture(minimumDuration: 5) { enterEditMode() }
         )
+        .animation(.smooth(duration: 0.32), value: visibleCards)
       }
     }
     .scrollIndicators(.hidden)
@@ -555,6 +665,41 @@ private struct MensuraHomeView: View {
   }
 
   @ViewBuilder
+  private func dashboardGrid(_ cards: [DashboardCard]) -> some View {
+    Grid(horizontalSpacing: 10, verticalSpacing: 10) {
+      ForEach(Array(stride(from: 0, to: cards.count, by: 2)), id: \.self) { index in
+        GridRow {
+          if index + 1 < cards.count {
+            dashboardCardCell(cards[index])
+            dashboardCardCell(cards[index + 1])
+          } else {
+            dashboardCardCell(cards[index])
+              .gridCellColumns(2)
+          }
+        }
+      }
+    }
+    .frame(maxWidth: .infinity)
+  }
+
+  private func dashboardCardCell(_ card: DashboardCard) -> some View {
+    dashboardCard(card)
+      .frame(maxWidth: .infinity)
+      .frame(height: 200)
+      .overlay(alignment: .topTrailing) {
+        if isEditingDashboard {
+          editControls(for: card)
+        }
+      }
+      .modifier(DashboardReorderModifier(card: card, isEditing: isEditingDashboard) { source, target in
+        withAnimation(.smooth(duration: 0.28)) {
+          store.moveCard(source, before: target)
+        }
+      })
+      .sensoryFeedback(.selection, trigger: isEditingDashboard)
+  }
+
+  @ViewBuilder
   private func dashboardCard(_ card: DashboardCard) -> some View {
     switch card {
     case .weight:
@@ -596,6 +741,36 @@ private struct MensuraHomeView: View {
     guard !isEditingDashboard else { return }
     UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
     withAnimation(.snappy) { isEditingDashboard = true }
+  }
+}
+
+@available(iOS 26.0, *)
+private struct DashboardReorderModifier: ViewModifier {
+  let card: DashboardCard
+  let isEditing: Bool
+  let onMove: (DashboardCard, DashboardCard) -> Void
+
+  @ViewBuilder
+  func body(content: Content) -> some View {
+    if isEditing {
+      content
+        .draggable(card.rawValue) {
+          Text(card.title)
+            .font(.headline)
+            .padding(12)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+        }
+        .dropDestination(for: String.self) { items, _ in
+          guard
+            let raw = items.first,
+            let source = DashboardCard(rawValue: raw)
+          else { return false }
+          onMove(source, card)
+          return true
+        }
+    } else {
+      content
+    }
   }
 }
 
@@ -710,7 +885,7 @@ private struct MacroMetric: View {
         .font(.system(size: 15))
         .foregroundStyle(.secondary)
       SmoothProgressBar(progress: target > 0 ? value / target : 0, color: color)
-        .frame(height: 9)
+        .frame(height: 6)
       Text("\(Int(value)) / \(Int(target))g")
         .font(.system(size: 14, weight: .medium))
         .monospacedDigit()
@@ -727,14 +902,17 @@ private struct SmoothProgressBar: View {
   var body: some View {
     GeometryReader { proxy in
       let width = proxy.size.width * min(max(progress, 0), 1)
-      Capsule()
-        .fill(Color(red: 248 / 255, green: 246 / 255, blue: 247 / 255))
-        .overlay(alignment: .leading) {
+      ZStack(alignment: .leading) {
+        Capsule()
+          .fill(Color(red: 248 / 255, green: 246 / 255, blue: 247 / 255))
+        if progress > 0 {
           Capsule()
             .fill(color)
-            .frame(width: max(width, progress > 0 ? 7 : 0))
-            .padding(1)
+            .frame(width: max(width, proxy.size.height))
+            .transition(.scale(scale: 0, anchor: .leading).combined(with: .opacity))
         }
+      }
+      .animation(.smooth(duration: 0.34), value: progress)
     }
     .clipShape(Capsule())
   }
@@ -1383,12 +1561,14 @@ private struct FoodHistoryView: View {
 // MARK: - Add menu and food logging
 
 @available(iOS 26.0, *)
-private enum AddRoute: String, Hashable, CaseIterable {
+private enum AddRoute: String, Hashable, CaseIterable, Identifiable {
   case food
   case calories
   case water
   case weight
   case activity
+
+  var id: String { rawValue }
 
   var title: String {
     switch self {
@@ -1412,92 +1592,297 @@ private enum AddRoute: String, Hashable, CaseIterable {
 }
 
 @available(iOS 26.0, *)
-private struct AddMenuView: View {
+private struct AddQuickMenuCard: View {
+  let onSelect: (AddRoute) -> Void
+
+  var body: some View {
+    VStack(spacing: 0) {
+      HStack {
+        Text("Add")
+          .font(.system(size: 22, weight: .semibold))
+        Spacer()
+        Text("Choose what to log")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+      .padding(.horizontal, 18)
+      .padding(.vertical, 16)
+
+      Divider().padding(.leading, 18)
+
+      ForEach(Array(AddRoute.allCases.enumerated()), id: \.element.id) { index, route in
+        Button {
+          UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+          onSelect(route)
+        } label: {
+          HStack(spacing: 14) {
+            Image(systemName: route.symbol)
+              .font(.system(size: 18, weight: .medium))
+              .frame(width: 28)
+            Text(route.title)
+              .font(.system(size: 17, weight: .medium))
+            Spacer()
+            Image(systemName: "chevron.right")
+              .font(.caption.weight(.semibold))
+              .foregroundStyle(.tertiary)
+          }
+          .foregroundStyle(.black)
+          .frame(height: 52)
+          .padding(.horizontal, 18)
+        }
+        .buttonStyle(.plain)
+
+        if index < AddRoute.allCases.count - 1 {
+          Divider().padding(.leading, 60)
+        }
+      }
+    }
+    .fixedSize(horizontal: false, vertical: true)
+    .frame(maxWidth: 390)
+    .background(Color.white, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+    .overlay {
+      RoundedRectangle(cornerRadius: 24, style: .continuous)
+        .stroke(Color.black.opacity(0.06), lineWidth: 0.7)
+    }
+    .shadow(color: .black.opacity(0.16), radius: 24, y: 12)
+  }
+}
+
+@available(iOS 26.0, *)
+private struct AddDestinationView: View {
+  let route: AddRoute
   @ObservedObject var store: MensuraStore
   @Environment(\.dismiss) private var dismiss
 
+  @ViewBuilder
   var body: some View {
-    NavigationStack {
-      List(AddRoute.allCases, id: \.self) { route in
-        NavigationLink(value: route) {
-          Label(route.title, systemImage: route.symbol)
-            .font(.body.weight(.medium))
-            .padding(.vertical, 5)
-        }
+    switch route {
+    case .food:
+      FoodLoggingView(store: store)
+    case .water:
+      WaterAmountPicker(store: store)
+    case .calories, .weight, .activity:
+      NavigationStack {
+        destinationContent
+          .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+              Button { dismiss() } label: {
+                Image(systemName: "xmark")
+              }
+            }
+          }
       }
-      .navigationTitle("Add")
-      .navigationBarTitleDisplayMode(.inline)
-      .toolbar {
-        ToolbarItem(placement: .cancellationAction) {
-          Button("Close") { dismiss() }
-        }
-      }
-      .navigationDestination(for: AddRoute.self) { route in
-        switch route {
-        case .food: FoodSearchView(store: store)
-        case .calories: QuickCaloriesView(store: store)
-        case .water: WaterAmountPicker(store: store)
-        case .weight: LogWeightView(store: store)
-        case .activity: LogActivityView(store: store)
-        }
-      }
+    }
+  }
+
+  @ViewBuilder
+  private var destinationContent: some View {
+    switch route {
+    case .calories: QuickCaloriesView(store: store)
+    case .weight: LogWeightView(store: store)
+    case .activity: LogActivityView(store: store)
+    default: EmptyView()
     }
   }
 }
 
 @available(iOS 26.0, *)
-private struct FoodSearchView: View {
+private enum MealSlot: String, CaseIterable, Identifiable {
+  case breakfast = "Breakfast"
+  case lunch = "Lunch"
+  case dinner = "Dinner"
+  case snacks = "Snack"
+
+  var id: String { rawValue }
+  var title: String { self == .snacks ? "Snacks" : rawValue }
+}
+
+@available(iOS 26.0, *)
+private struct FoodLoggingView: View {
   @ObservedObject var store: MensuraStore
+  @Environment(\.dismiss) private var dismiss
   @State private var query = ""
   @State private var results: [FoodEntry] = Self.starterFoods
   @State private var isSearching = false
   @State private var isScannerPresented = false
+  @State private var selectedMeal = MealSlot.breakfast
+  @State private var lastAddedID: UUID?
 
   var body: some View {
-    VStack(spacing: 12) {
-      HStack(spacing: 10) {
-        Button { isScannerPresented = true } label: {
-          Image(systemName: "barcode.viewfinder")
-            .font(.system(size: 19, weight: .medium))
-            .foregroundStyle(.primary)
-            .frame(width: 34, height: 34)
-        }
-        TextField("Search food", text: $query)
-          .textInputAutocapitalization(.never)
-          .submitLabel(.search)
-          .onSubmit { Task { await search() } }
-        if isSearching { ProgressView().controlSize(.small) }
-      }
-      .padding(.horizontal, 12)
-      .frame(height: 48)
-      .background(Color(uiColor: .secondarySystemBackground), in: Capsule())
-      .padding(.horizontal, 16)
+    NavigationStack {
+      VStack(spacing: 0) {
+        searchField
+          .padding(.horizontal, 16)
+          .padding(.top, 10)
 
-      List(results) { food in
-        Button {
-          store.addFood(food)
-          UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        } label: {
-          HStack {
-            VStack(alignment: .leading, spacing: 3) {
-              Text(food.name).foregroundStyle(.primary)
-              if !food.brand.isEmpty {
-                Text(food.brand).font(.caption).foregroundStyle(.secondary)
-              }
+        mealTabs
+          .padding(.horizontal, 16)
+          .padding(.top, 13)
+
+        ScrollView {
+          LazyVStack(spacing: 0) {
+            mealSummary
+              .padding(.horizontal, 16)
+              .padding(.vertical, 16)
+
+            HStack {
+              Text(query.isEmpty ? "Suggested foods" : "Search results")
+                .font(.system(size: 20, weight: .semibold))
+              Spacer()
+              Text("per serving")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
-            Spacer()
-            Text("\(food.calories) kcal")
-              .font(.subheadline.weight(.medium))
-              .foregroundStyle(.secondary)
+            .padding(.horizontal, 18)
+            .padding(.bottom, 7)
+
+            ForEach(results) { food in
+              foodRow(food)
+              Divider().padding(.leading, 18)
+            }
           }
         }
       }
-      .listStyle(.plain)
+      .background(Color.white)
+      .navigationTitle("Add Food")
+      .navigationBarTitleDisplayMode(.inline)
+      .toolbar {
+        ToolbarItem(placement: .cancellationAction) {
+          Button { dismiss() } label: {
+            Image(systemName: "xmark")
+          }
+        }
+      }
+      .sheet(isPresented: $isScannerPresented) {
+        BarcodeLookupFlow(store: store, meal: selectedMeal)
+      }
     }
-    .navigationTitle("Food")
-    .navigationBarTitleDisplayMode(.inline)
-    .sheet(isPresented: $isScannerPresented) {
-      BarcodeLookupFlow(store: store)
+  }
+
+  private var searchField: some View {
+    HStack(spacing: 9) {
+      Button { isScannerPresented = true } label: {
+        Image(systemName: "barcode.viewfinder")
+          .font(.system(size: 19, weight: .medium))
+          .foregroundStyle(.black)
+          .frame(width: 34, height: 34)
+      }
+      TextField("Search food", text: $query)
+        .textInputAutocapitalization(.never)
+        .submitLabel(.search)
+        .onSubmit { Task { await search() } }
+      if isSearching {
+        ProgressView().controlSize(.small)
+      } else if !query.isEmpty {
+        Button {
+          query = ""
+          results = Self.starterFoods
+        } label: {
+          Image(systemName: "xmark.circle.fill")
+            .foregroundStyle(.tertiary)
+        }
+      }
+    }
+    .padding(.horizontal, 10)
+    .frame(height: 48)
+    .background(Color(uiColor: .secondarySystemBackground), in: Capsule())
+  }
+
+  private var mealTabs: some View {
+    HStack(spacing: 0) {
+      ForEach(MealSlot.allCases) { meal in
+        Button {
+          UISelectionFeedbackGenerator().selectionChanged()
+          withAnimation(.smooth(duration: 0.24)) { selectedMeal = meal }
+        } label: {
+          VStack(spacing: 8) {
+            Text(meal.title)
+              .font(.system(size: 14, weight: selectedMeal == meal ? .semibold : .regular))
+              .foregroundStyle(selectedMeal == meal ? Color.black : Color.secondary)
+            Capsule()
+              .fill(selectedMeal == meal ? Color.black : Color.clear)
+              .frame(height: 2.5)
+          }
+          .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.plain)
+      }
+    }
+    .overlay(alignment: .bottom) { Divider() }
+  }
+
+  private var mealSummary: some View {
+    HStack(spacing: 14) {
+      ZStack {
+        Circle().fill(Color.black)
+        Image(systemName: "fork.knife")
+          .font(.system(size: 16, weight: .medium))
+          .foregroundStyle(.white)
+      }
+      .frame(width: 42, height: 42)
+
+      VStack(alignment: .leading, spacing: 3) {
+        Text(selectedMeal.title)
+          .font(.headline)
+        Text("\(selectedMealEntries.count) items logged")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+      Spacer()
+      Text("\(selectedMealCalories) kcal")
+        .font(.system(size: 17, weight: .semibold))
+        .contentTransition(.numericText())
+    }
+    .padding(14)
+    .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+  }
+
+  private func foodRow(_ food: FoodEntry) -> some View {
+    HStack(spacing: 12) {
+      VStack(alignment: .leading, spacing: 4) {
+        Text(food.name)
+          .font(.system(size: 16, weight: .medium))
+        Text(food.brand.isEmpty ? "Food database" : food.brand)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+      Spacer()
+      Text("\(food.calories) kcal")
+        .font(.subheadline.weight(.medium))
+        .foregroundStyle(.secondary)
+      Button { add(food) } label: {
+        Image(systemName: lastAddedID == food.id ? "checkmark" : "plus")
+          .font(.system(size: 15, weight: .semibold))
+          .foregroundStyle(.white)
+          .frame(width: 32, height: 32)
+          .background(Color.black, in: Circle())
+      }
+      .buttonStyle(.plain)
+      .accessibilityLabel("Add \(food.name) to \(selectedMeal.title)")
+    }
+    .padding(.horizontal, 18)
+    .frame(minHeight: 68)
+  }
+
+  private var selectedMealEntries: [FoodEntry] {
+    store.foodEntries.filter { $0.meal == selectedMeal.rawValue }
+  }
+
+  private var selectedMealCalories: Int {
+    selectedMealEntries.reduce(0) { $0 + $1.calories }
+  }
+
+  private func add(_ food: FoodEntry) {
+    var loggedFood = food
+    loggedFood.id = UUID()
+    loggedFood.meal = selectedMeal.rawValue
+    store.addFood(loggedFood)
+    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    withAnimation(.smooth(duration: 0.2)) { lastAddedID = food.id }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+      if lastAddedID == food.id {
+        withAnimation(.smooth(duration: 0.2)) { lastAddedID = nil }
+      }
     }
   }
 
@@ -1600,6 +1985,7 @@ private struct LogActivityView: View {
 @available(iOS 26.0, *)
 private struct BarcodeLookupFlow: View {
   @ObservedObject var store: MensuraStore
+  let meal: MealSlot
   @Environment(\.dismiss) private var dismiss
 
   @State private var scannedCode: String?
@@ -1613,7 +1999,10 @@ private struct BarcodeLookupFlow: View {
       Group {
         if let food = foundFood {
           FoodConfirmationView(food: food) {
-            store.addFood(food)
+            var loggedFood = food
+            loggedFood.id = UUID()
+            loggedFood.meal = meal.rawValue
+            store.addFood(loggedFood)
             dismiss()
           }
         } else if isLoading {
@@ -1653,7 +2042,7 @@ private struct BarcodeLookupFlow: View {
         }
       }
       .sheet(isPresented: $isNutritionCapturePresented) {
-        NutritionLabelCaptureView(store: store)
+        NutritionLabelCaptureView(store: store, meal: meal)
       }
     }
   }
@@ -1877,6 +2266,7 @@ private struct NutritionDraft {
 @available(iOS 26.0, *)
 private struct NutritionLabelCaptureView: View {
   @ObservedObject var store: MensuraStore
+  let meal: MealSlot
   @Environment(\.dismiss) private var dismiss
 
   @State private var draft = NutritionDraft()
@@ -1908,7 +2298,10 @@ private struct NutritionLabelCaptureView: View {
           }
           Button("Add confirmed food") {
             guard let entry = draft.foodEntry else { return }
-            store.addFood(entry)
+            var loggedFood = entry
+            loggedFood.id = UUID()
+            loggedFood.meal = meal.rawValue
+            store.addFood(loggedFood)
             dismiss()
           }
           .fontWeight(.semibold)
